@@ -6,13 +6,24 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
-# Clone omarchyy from repo
-echo "Clone Omarchy from repo..."
-if ! git clone https://www.github.com/basecamp/omarchy ../omarchy; then
-    echo "Error: Failed to clone Omarchy repo."
+# Fetch Omarchy from repo
+echo "Fetching Omarchy source..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OMARCHY_DIR="$SCRIPT_DIR/../../omarchy"
+
+if [ -f "./fetch-omarchy.sh" ]; then
+    chmod +x ./fetch-omarchy.sh
+    ./fetch-omarchy.sh
+else
+    # Fallback if script is missing
+    echo "fetch-omarchy.sh not found, falling back to default clone..."
+    git clone https://www.github.com/basecamp/omarchy "$OMARCHY_DIR"
 fi
 
-echo "Successfully extracted omarchy archive."
+if [ ! -d "$OMARCHY_DIR" ]; then
+    echo "Error: Failed to fetch Omarchy source at $OMARCHY_DIR"
+    exit 1
+fi
 
 # Check if yay is installed
 if ! command -v yay &> /dev/null; then
@@ -117,9 +128,6 @@ fi
 echo "Cleaning up generic Vulkan scripts to preserve CachyOS specific configurations..."
 #rm -f install/config/hardware/vulkan.sh
 
-# Fix omarchy-ai-skill.sh symlink to be idempotent on re-runs
-sed -i 's/ln -s/ln -sf/' install/config/omarchy-ai-skill.sh
-
 # Remove plymouth.sh source line from install.sh
 sed -i '/run_logged \$OMARCHY_INSTALL\/login\/plymouth\.sh/d' install/login/all.sh
 
@@ -179,9 +187,6 @@ echo " 5. Removed Intel/Vulkan video drivers installation to preserve CachyOS de
 echo " 6. Removed plymouth.sh from install.sh to avoid conflict with CachyOS login display manager installation."
 echo " 7. Removed limine-snapper.sh from install.sh to avoid conflict with CachyOS boot loader installation."
 echo " 8. Removed /etc/sddm.conf to avoid conflict with Omarchy UWSM session autologin."
-echo " 9. Disabled wpa_supplicant and configured NetworkManager to use iwd backend."
-echo "10. Pinned walker to omarchy repo to prevent CachyOS version conflict."
-echo ""
 echo "IMPORTANT: If you installed CachyOS without a deskop environment, you will not have a display manager installed." 
 echo "If this is the case, you will need to run the following command after this installation script is complete:"
 echo " 1.) ~/.local/share/omarchy/install/login/plymouth.sh"  

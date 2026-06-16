@@ -1,6 +1,7 @@
 # omarchy-on-cachyos
 
-UPDATE 1-October-2025: The install script has been updated to support Omarchy 3.0+ out of the box. 
+- UPDATE 20-May-2026: The install script now includes interactive version selection for choosing between Stable releases and Bleeding Edge.
+- UPDATE 1-October-2025: The install script has been updated to support Omarchy 3.0+ out of the box.
 
 ## 1. Introduction
 
@@ -10,7 +11,7 @@ This project provides an installation script for implementing DHH's Omarchy conf
 
 This installation script does the following three things:
 
-  1) Clones Omarchy from its github repository 
+  1) Prompts for and fetches your preferred version of Omarchy (Stable tags or Bleeding Edge)
   2) Makes adjustments to the Omarchy install scripts to support installation on CachyOS
   3) Launches the installation of Omarchy on an already setup CachyOS system
   4) Injects optimal environment variables for NVIDIA GPUs based on architecture (Turing+ vs older GPUs)
