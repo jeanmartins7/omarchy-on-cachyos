@@ -1,57 +1,112 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
-# Target destination (relative to this script's location)
+# ==============================================================================
+# Omarchy on CachyOS - Repository Fetcher
+# Fetches and selects Omarchy versions (v4.x, v3.x, or bleeding edge main)
+# ==============================================================================
+
+BOLD="\e[1m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+RED="\e[31m"
+CYAN="\e[36m"
+RESET="\e[0m"
+
+log_info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
+log_success() { echo -e "${GREEN}[OK]${RESET} $*"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+log_error()   { echo -e "${RED}[ERROR]${RESET} $*"; }
+
+# 1. Resolve canonical directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="$SCRIPT_DIR/../../omarchy"
-REPO_URL="https://github.com/basecamp/omarchy"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+TARGET_DIR="${OMARCHY_SOURCE_DIR:-$(dirname "$PROJECT_ROOT")/omarchy}"
+REPO_URL="https://github.com/basecamp/omarchy.git"
 
-# Fetch available stable version tags from the remote repository cleanly
-echo "Fetching available stable releases from GitHub..."
-RELEASES=($(git ls-remote --tags --refs $REPO_URL 2>/dev/null | awk -F/ '{print $3}' | sort -rV | head -n 5))
+log_info "Omarchy target directory: ${CYAN}${TARGET_DIR}${RESET}"
 
-echo "-----------------------------------------------"
-echo "Select the Omarchy version you want to install:"
-echo "-----------------------------------------------"
-echo "1) Bleeding Edge (dev/main branch - Unstable)"
+# 2. Fetch available tags from GitHub
+log_info "Fetching available tags from ${REPO_URL}..."
+ALL_TAGS=($(git ls-remote --tags --refs "$REPO_URL" 2>/dev/null | awk -F/ '{print $3}' | grep -E '^v?[0-9]+\.[0-9]+' | sort -rV || true))
 
-# Dynamically list the stable versions fetched from the repository
-for i in "${!RELEASES[@]}"; do
-    echo "$((i+2))) Stable Release (${RELEASES[i]})"
-done
-
-read -r -p "Enter your choice (1-$(( ${#RELEASES[@]} + 1 ))): " CHOICE
-
-# Formulate arguments based on selection
-if [ "$CHOICE" -eq 1 ] || [ -z "$CHOICE" ]; then
-    BRANCH_ARGS=""
-    echo "Cloning bleeding-edge dev tree..."
-else
-    SELECTED_TAG="${RELEASES[$((CHOICE-2))]}"
-    BRANCH_ARGS="--depth 1 -b $SELECTED_TAG"
-    echo "Cloning stable version: $SELECTED_TAG..."
+if [ ${#ALL_TAGS[@]} -eq 0 ]; then
+    log_warn "Could not fetch tags remotely or network is slow. Falling back to default list."
+    ALL_TAGS=("v4.0.0" "v3.8.4" "v3.0.0")
 fi
 
-# Ensure target directory is clean before git cloning to prevent fatal conflicts
+# Filter top 8 tags
+TAGS=("${ALL_TAGS[@]:0:8}")
+
+echo -e ""
+echo -e "${BOLD}====================================================${RESET}"
+echo -e "${BOLD}  Select the Omarchy version to install on CachyOS  ${RESET}"
+echo -e "${BOLD}====================================================${RESET}"
+echo -e " 1) ${CYAN}Bleeding Edge (main / dev branch - Latest)${RESET}"
+
+INDEX=2
+for TAG in "${TAGS[@]}"; do
+    if [[ "$TAG" =~ ^v?4\. ]]; then
+        echo -e " ${INDEX}) ${GREEN}Omarchy 4.x (Quattro)${RESET} -> ${BOLD}${TAG}${RESET} (Recommended)"
+    else
+        echo -e " ${INDEX}) Omarchy 3.x -> ${TAG}"
+    fi
+    INDEX=$((INDEX + 1))
+done
+
+echo -e ""
+read -r -p "Enter your choice [1-$((INDEX - 1))] (Default: 2): " USER_CHOICE
+USER_CHOICE="${USER_CHOICE:-2}"
+
+if [ "$USER_CHOICE" -eq 1 ]; then
+    SELECTED_REF="main"
+    VERSION_TYPE="v4"
+    BRANCH_ARGS="--depth 1 --branch main"
+    log_info "Selected: Bleeding Edge (main branch)"
+elif [ "$USER_CHOICE" -ge 2 ] && [ "$USER_CHOICE" -lt "$INDEX" ]; then
+    SELECTED_REF="${TAGS[$((USER_CHOICE - 2))]}"
+    if [[ "$SELECTED_REF" =~ ^v?4\. ]]; then
+        VERSION_TYPE="v4"
+    else
+        VERSION_TYPE="v3"
+    fi
+    BRANCH_ARGS="--depth 1 --branch $SELECTED_REF"
+    log_info "Selected: Stable Tag ${BOLD}${SELECTED_REF}${RESET} (${VERSION_TYPE})"
+else
+    log_warn "Invalid selection. Defaulting to latest release (${TAGS[0]})."
+    SELECTED_REF="${TAGS[0]}"
+    VERSION_TYPE="v4"
+    BRANCH_ARGS="--depth 1 --branch $SELECTED_REF"
+fi
+
+# 3. Clean up or confirm target directory
 if [ -d "$TARGET_DIR" ]; then
-    echo ""
-    echo "⚠️  Warning: An existing installation directory was found at $TARGET_DIR"
-    read -r -p "Would you like to delete it and proceed with a clean install? [y/N]: " CONFIRM
-    
-    if [[ "${CONFIRM,,}" =~ ^(y|yes)$ ]]; then
-        echo "Cleaning up previous installation files at $TARGET_DIR..."
+    echo -e ""
+    log_warn "Existing directory found at ${TARGET_DIR}"
+    read -r -p "Delete existing source and re-clone? [Y/n]: " RECLONE
+    RECLONE="${RECLONE:-Y}"
+    if [[ "${RECLONE,,}" =~ ^(y|yes)$ ]]; then
+        log_info "Cleaning up previous directory..."
         rm -rf "$TARGET_DIR"
     else
-        echo "Proceeding with existing files in $TARGET_DIR..."
-        # If user chooses not to delete, we should skip the clone but continue the script
+        log_info "Keeping existing directory at $TARGET_DIR."
+        echo "$VERSION_TYPE" > "$TARGET_DIR/.omarchy_version" 2>/dev/null || true
+        echo "$SELECTED_REF" > "$TARGET_DIR/.omarchy_ref" 2>/dev/null || true
         exit 0
     fi
 fi
 
-# Execute clean, quiet checkout bypassing standard detached HEAD advice warnings
-echo "Cloning into $TARGET_DIR..."
-if ! git -c advice.detachedHead=false clone --quiet $BRANCH_ARGS $REPO_URL "$TARGET_DIR"; then
-    echo "Error: Failed to clone Omarchy repo."
+# 4. Clone Omarchy
+log_info "Cloning Omarchy into ${TARGET_DIR}..."
+mkdir -p "$(dirname "$TARGET_DIR")"
+if ! git -c advice.detachedHead=false clone --quiet $BRANCH_ARGS "$REPO_URL" "$TARGET_DIR"; then
+    log_error "Failed to clone repository from $REPO_URL."
     exit 1
 fi
 
-echo "Successfully cloned Omarchy repository layout."
+# Save metadata for installers
+echo "$VERSION_TYPE" > "$TARGET_DIR/.omarchy_version"
+echo "$SELECTED_REF" > "$TARGET_DIR/.omarchy_ref"
+
+log_success "Successfully fetched Omarchy (${SELECTED_REF}) into ${TARGET_DIR}"
