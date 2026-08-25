@@ -196,6 +196,7 @@ fi
 log_info "[4/6] Executing Omarchy 4.0 system apply..."
 
 STEP4_LOG="/tmp/omarchy-step4-$(date +%Y%m%d-%H%M%S).log"
+STEP4_STDERR="/tmp/omarchy-step4-stderr-$(date +%Y%m%d-%H%M%S).log"
 
 # Diagnostic: show what actually exists in the system directory
 log_info "Diagnosing Omarchy system directory contents..."
@@ -230,6 +231,86 @@ for candidate in \
     fi
 done
 
+# Helper: analyze a log file for common error patterns and display a diagnostic summary
+_diagnose_failure() {
+    local log_file="$1"
+    local stderr_file="$2"
+    local script_name="$3"
+    local exit_code="$4"
+
+    echo ""
+    log_error "╔══════════════════════════════════════════════════════════════════╗"
+    log_error "║  FAILURE DIAGNOSIS: ${script_name} (exit code: ${exit_code})"
+    log_error "╚══════════════════════════════════════════════════════════════════╝"
+
+    # Show stderr separately if it has content
+    if [ -s "$stderr_file" ]; then
+        echo ""
+        log_error "── Captured stderr output ──────────────────────────────────────"
+        tail -30 "$stderr_file" | while IFS= read -r line; do
+            echo -e "  ${RED}│${RESET} $line"
+        done
+    fi
+
+    # Scan for common failure patterns in the combined log
+    if [ -s "$log_file" ]; then
+        echo ""
+        log_error "── Scanning log for error patterns ─────────────────────────────"
+
+        local PATTERNS=(
+            "error:"
+            "Error:"
+            "ERROR"
+            "FAILED"
+            "fatal:"
+            "command not found"
+            "No such file or directory"
+            "Permission denied"
+            "could not"
+            "unable to"
+            "target not found"
+            "unresolvable package"
+            "failed to"
+            "conflict"
+            "exists in filesystem"
+            "Traceback"
+            "SyntaxError"
+            "segfault"
+        )
+        local PATTERN_REGEX
+        PATTERN_REGEX=$(printf "%s\n" "${PATTERNS[@]}" | paste -sd '|' -)
+
+        local ERROR_LINES
+        ERROR_LINES=$(grep -inE "$PATTERN_REGEX" "$log_file" 2>/dev/null | head -20)
+
+        if [ -n "$ERROR_LINES" ]; then
+            log_error "Found the following error indicators in the log:"
+            echo "$ERROR_LINES" | while IFS= read -r match; do
+                echo -e "  ${RED}▸${RESET} $match"
+            done
+        else
+            log_warn "No common error patterns found — the failure may be a silent exit."
+            log_warn "This can happen when a called script uses 'exit 1' without printing an error."
+        fi
+
+        # Show last 30 lines of the combined log for context
+        echo ""
+        log_error "── Last 30 lines of output ─────────────────────────────────────"
+        tail -30 "$log_file" | while IFS= read -r line; do
+            echo -e "  ${RED}│${RESET} $line"
+        done
+    else
+        log_warn "Log file is empty — the script may have failed before producing output."
+    fi
+
+    echo ""
+    log_error "── Log files for manual inspection ──────────────────────────────"
+    log_error "  Combined log:  ${CYAN}${log_file}${RESET}"
+    log_error "  Stderr log:    ${CYAN}${stderr_file}${RESET}"
+    log_error "  Install log:   ${CYAN}${INSTALL_LOG}${RESET}"
+    echo ""
+}
+
 if [ -n "$APPLY_SYSTEM_SCRIPT" ]; then
     log_info "Found system apply script: ${CYAN}$(basename "$APPLY_SYSTEM_SCRIPT")${RESET}"
     log_info "Running $(basename "$APPLY_SYSTEM_SCRIPT") (detailed log: $STEP4_LOG)..."
@@ -241,17 +322,12 @@ if [ -n "$APPLY_SYSTEM_SCRIPT" ]; then
         "OMARCHY_INSTALL_USER=$TARGET_USER" \
         "OMARCHY_SETUP_CONTEXT=fresh-install" \
         "$APPLY_SYSTEM_SCRIPT" --install-user "$TARGET_USER" --first-install \
-        2>&1 | tee "$STEP4_LOG"
+        > >(tee "$STEP4_LOG") 2> >(tee "$STEP4_STDERR" >&2)
     STEP4_EXIT=${PIPESTATUS[0]}
     set -e
 
     if [ "$STEP4_EXIT" -ne 0 ]; then
-        log_error "$(basename "$APPLY_SYSTEM_SCRIPT") failed with exit code: $STEP4_EXIT"
-        log_error "Detailed log saved at: $STEP4_LOG"
-        log_error "Last 25 lines of output:"
-        tail -25 "$STEP4_LOG" | while IFS= read -r line; do
-            echo -e "  ${RED}│${RESET} $line"
-        done
+        _diagnose_failure "$STEP4_LOG" "$STEP4_STDERR" "$(basename "$APPLY_SYSTEM_SCRIPT")" "$STEP4_EXIT"
         exit "$STEP4_EXIT"
     fi
 else
@@ -268,11 +344,12 @@ else
             SCRIPT_NAME="$(basename "$script")"
             log_info "  Running hardware/$SCRIPT_NAME..."
             set +e
-            sudo bash "$script" 2>&1 | tee -a "$STEP4_LOG"
+            sudo bash "$script" > >(tee -a "$STEP4_LOG") 2> >(tee -a "$STEP4_STDERR" >&2)
             SCRIPT_EXIT=${PIPESTATUS[0]}
             set -e
             if [ "$SCRIPT_EXIT" -ne 0 ]; then
                 log_error "  FAILED: hardware/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
+                _diagnose_failure "$STEP4_LOG" "$STEP4_STDERR" "hardware/$SCRIPT_NAME" "$SCRIPT_EXIT"
                 FAILED_SCRIPTS+=("hardware/$SCRIPT_NAME")
             else
                 log_success "  Completed: hardware/$SCRIPT_NAME"
@@ -287,11 +364,12 @@ else
             SCRIPT_NAME="$(basename "$script")"
             log_info "  Running post-install/$SCRIPT_NAME..."
             set +e
-            sudo bash "$script" 2>&1 | tee -a "$STEP4_LOG"
+            sudo bash "$script" > >(tee -a "$STEP4_LOG") 2> >(tee -a "$STEP4_STDERR" >&2)
             SCRIPT_EXIT=${PIPESTATUS[0]}
             set -e
             if [ "$SCRIPT_EXIT" -ne 0 ]; then
                 log_error "  FAILED: post-install/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
+                _diagnose_failure "$STEP4_LOG" "$STEP4_STDERR" "post-install/$SCRIPT_NAME" "$SCRIPT_EXIT"
                 FAILED_SCRIPTS+=("post-install/$SCRIPT_NAME")
             else
                 log_success "  Completed: post-install/$SCRIPT_NAME"
