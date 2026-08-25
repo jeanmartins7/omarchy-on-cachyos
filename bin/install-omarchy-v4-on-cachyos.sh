@@ -21,6 +21,15 @@ log_success() { echo -e "${GREEN}[OK]${RESET} $*"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
 log_error()   { echo -e "${RED}[ERROR]${RESET} $*"; }
 
+# Persistent installation log — captures both stdout and stderr
+INSTALL_LOG="/tmp/omarchy-install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+
+# Global error trap — reports failing line number and exit code on unexpected abort
+trap 'EXIT_CODE=$?; log_error "Script aborted at line $LINENO (exit code: $EXIT_CODE)"; log_error "Full installation log saved at: $INSTALL_LOG"; exit $EXIT_CODE' ERR
+
+log_info "Installation log: ${CYAN}${INSTALL_LOG}${RESET}"
+
 # Check that script is not directly run as root (it uses sudo when needed)
 if [ "$EUID" -eq 0 ]; then
     log_error "Please run this script as a normal user (do NOT run with sudo)."
@@ -186,26 +195,77 @@ fi
 # 8. Omarchy System Orchestration (Root)
 log_info "[4/6] Executing Omarchy 4.0 system apply..."
 
+STEP4_LOG="/tmp/omarchy-step4-$(date +%Y%m%d-%H%M%S).log"
+
 if [ -x "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" ]; then
+    log_info "Running omarchy-apply-system (detailed log: $STEP4_LOG)..."
+    set +e
     sudo -E env \
         "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
         "OMARCHY_PATH=$SYSTEM_OMARCHY_DIR" \
         "OMARCHY_INSTALL=$SYSTEM_OMARCHY_DIR/install" \
         "OMARCHY_INSTALL_USER=$TARGET_USER" \
         "OMARCHY_SETUP_CONTEXT=fresh-install" \
-        "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" --install-user "$TARGET_USER" --first-install
+        "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" --install-user "$TARGET_USER" --first-install \
+        2>&1 | tee "$STEP4_LOG"
+    STEP4_EXIT=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$STEP4_EXIT" -ne 0 ]; then
+        log_error "omarchy-apply-system failed with exit code: $STEP4_EXIT"
+        log_error "Detailed log saved at: $STEP4_LOG"
+        log_error "Last 25 lines of output:"
+        tail -25 "$STEP4_LOG" | while IFS= read -r line; do
+            echo -e "  ${RED}│${RESET} $line"
+        done
+        exit "$STEP4_EXIT"
+    fi
 else
     log_warn "omarchy-apply-system not found. Running post-install scripts manually..."
+    FAILED_SCRIPTS=()
+
     # Run hardware detection scripts
     for script in "$SYSTEM_OMARCHY_DIR"/install/hardware/*.sh; do
-        [ -f "$script" ] && sudo bash "$script" || true
+        if [ -f "$script" ]; then
+            SCRIPT_NAME="$(basename "$script")"
+            log_info "  Running hardware/$SCRIPT_NAME..."
+            set +e
+            sudo bash "$script" 2>&1 | tee -a "$STEP4_LOG"
+            SCRIPT_EXIT=${PIPESTATUS[0]}
+            set -e
+            if [ "$SCRIPT_EXIT" -ne 0 ]; then
+                log_error "  FAILED: hardware/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
+                FAILED_SCRIPTS+=("hardware/$SCRIPT_NAME")
+            else
+                log_success "  Completed: hardware/$SCRIPT_NAME"
+            fi
+        fi
     done
+
     # Run post-install scripts
     for script in "$SYSTEM_OMARCHY_DIR"/install/post-install/*.sh; do
-        [ -f "$script" ] && sudo bash "$script" || true
+        if [ -f "$script" ]; then
+            SCRIPT_NAME="$(basename "$script")"
+            log_info "  Running post-install/$SCRIPT_NAME..."
+            set +e
+            sudo bash "$script" 2>&1 | tee -a "$STEP4_LOG"
+            SCRIPT_EXIT=${PIPESTATUS[0]}
+            set -e
+            if [ "$SCRIPT_EXIT" -ne 0 ]; then
+                log_error "  FAILED: post-install/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
+                FAILED_SCRIPTS+=("post-install/$SCRIPT_NAME")
+            else
+                log_success "  Completed: post-install/$SCRIPT_NAME"
+            fi
+        fi
     done
+
+    if [ ${#FAILED_SCRIPTS[@]} -gt 0 ]; then
+        log_warn "The following scripts failed: ${FAILED_SCRIPTS[*]}"
+        log_warn "Check the detailed log at: $STEP4_LOG"
+    fi
 fi
-log_success "System-level application completed."
+log_success "System-level application completed (log: $STEP4_LOG)."
 
 # 9. Restore and Merge CachyOS Pacman Repositories
 log_info "[5/6] Ensuring CachyOS optimized repository mirrors are preserved..."
@@ -224,14 +284,32 @@ fi
 # 10. User Provisioning and Dotfiles Management (User space)
 log_info "[6/6] Provisioning user environment for $TARGET_USER..."
 
+STEP6_LOG="/tmp/omarchy-step6-$(date +%Y%m%d-%H%M%S).log"
+
 if [ -x "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" ]; then
+    log_info "Running omarchy-provision-user (detailed log: $STEP6_LOG)..."
+    set +e
     sudo -u "$TARGET_USER" env \
         "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
         "OMARCHY_PATH=$SYSTEM_OMARCHY_DIR" \
         "OMARCHY_INSTALL=$SYSTEM_OMARCHY_DIR/install" \
         "OMARCHY_SETUP_CONTEXT=fresh-install" \
         "HOME=$USER_HOME" \
-        "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" --force --first-install || true
+        "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" --force --first-install \
+        2>&1 | tee "$STEP6_LOG"
+    STEP6_EXIT=${PIPESTATUS[0]}
+    set -e
+
+    if [ "$STEP6_EXIT" -ne 0 ]; then
+        log_warn "omarchy-provision-user exited with code: $STEP6_EXIT (non-fatal, continuing)"
+        log_warn "Detailed log saved at: $STEP6_LOG"
+        log_warn "Last 15 lines of output:"
+        tail -15 "$STEP6_LOG" | while IFS= read -r line; do
+            echo -e "  ${YELLOW}│${RESET} $line"
+        done
+    else
+        log_success "User provisioning completed successfully."
+    fi
 else
     log_warn "omarchy-provision-user not found, skipping user provisioning."
 fi
