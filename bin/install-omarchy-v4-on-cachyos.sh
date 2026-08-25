@@ -202,6 +202,9 @@ if [ -f "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" ]; then
     # Prevent conflict with CachyOS's tealdeer
     sudo sed -i '/^tldr$/d' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages"
     
+    # Prevent conflict with CachyOS's yay-bin
+    sudo sed -i '/^yay$/d' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages"
+    
     # Filter comments and empty lines to build the package list
     OMARCHY_PKGS=$(awk '!/^#/ && NF {print $1}' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" | tr '\n' ' ')
     log_info "Installing Omarchy base packages via yay..."
