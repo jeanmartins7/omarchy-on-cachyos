@@ -142,8 +142,8 @@ if [ -z "$OMARCHY_USER_EMAIL" ]; then
 fi
 
 # 5. Prepare System Root for Quattro Architecture (/usr/share/omarchy)
-CURRENT_STEP="[1/6] synchronizing Omarchy to system directory"
-log_info "[1/6] Synchronizing Omarchy 4.0 to system directory (${SYSTEM_OMARCHY_DIR})..."
+CURRENT_STEP="[1/7] synchronizing Omarchy to system directory"
+log_info "[1/7] Synchronizing Omarchy 4.0 to system directory (${SYSTEM_OMARCHY_DIR})..."
 sudo mkdir -p "$SYSTEM_OMARCHY_DIR"
 
 if command -v rsync &>/dev/null; then
@@ -158,8 +158,8 @@ sudo find "$SYSTEM_OMARCHY_DIR/install" -name '*.sh' -exec chmod +x {} + 2>/dev/
 log_success "Synchronized files to ${SYSTEM_OMARCHY_DIR}."
 
 # 6. Protect CachyOS Ecosystem & Bootloader
-CURRENT_STEP="[2/6] protecting CachyOS packages and bootloader"
-log_info "[2/6] Protecting CachyOS package configurations and bootloader..."
+CURRENT_STEP="[2/7] protecting CachyOS packages and bootloader"
+log_info "[2/7] Protecting CachyOS package configurations and bootloader..."
 
 # (a) Backup pacman.conf
 sudo cp /etc/pacman.conf /etc/pacman.conf.cachy_backup
@@ -195,16 +195,28 @@ if [ -f /etc/sddm.conf ]; then
     # NOTE: Do NOT delete sddm.conf — CachyOS needs it for its display manager
 fi
 
-# 7. Hardware & GPU Acceleration (NVIDIA / AMD / Intel)
-CURRENT_STEP="[3/6] configuring hardware video acceleration"
-log_info "[3/6] Configuring hardware video acceleration..."
+# 7. Install Omarchy Base Packages
+CURRENT_STEP="[3/7] installing Omarchy base packages"
+log_info "[3/7] Installing Omarchy base packages..."
+if [ -f "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" ]; then
+    # Filter comments and empty lines to build the package list
+    OMARCHY_PKGS=$(awk '!/^#/ && NF {print $1}' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" | tr '\n' ' ')
+    log_info "Installing Omarchy base packages via yay..."
+    yay -S --needed --noconfirm $OMARCHY_PKGS || log_warn "Some packages failed to install. This may be expected on CachyOS due to package conflicts/replacements."
+else
+    log_warn "omarchy-base.packages not found in $SYSTEM_OMARCHY_DIR/install/. Skipping base packages installation."
+fi
+
+# 8. Hardware & GPU Acceleration (NVIDIA / AMD / Intel)
+CURRENT_STEP="[4/7] configuring hardware video acceleration"
+log_info "[4/7] Configuring hardware video acceleration..."
 if [ -f "$SCRIPT_DIR/nvidia.sh" ]; then
     bash "$SCRIPT_DIR/nvidia.sh"
 fi
 
-# 8. Omarchy System Orchestration (Root)
-CURRENT_STEP="[4/6] executing Omarchy system apply"
-log_info "[4/6] Executing Omarchy 4.0 system apply..."
+# 9. Omarchy System Orchestration (Root)
+CURRENT_STEP="[5/7] executing Omarchy system apply"
+log_info "[5/7] Executing Omarchy 4.0 system apply..."
 
 STEP4_LOG="/tmp/omarchy-step4-$(date +%Y%m%d-%H%M%S).log"
 STEP4_STDERR="/tmp/omarchy-step4-stderr-$(date +%Y%m%d-%H%M%S).log"
@@ -415,9 +427,9 @@ else
 fi
 log_success "System-level application completed (log: $STEP4_LOG)."
 
-# 9. Restore and Merge CachyOS Pacman Repositories
-CURRENT_STEP="[5/6] restoring CachyOS pacman repositories"
-log_info "[5/6] Ensuring CachyOS optimized repository mirrors are preserved..."
+# 10. Restore and Merge CachyOS Pacman Repositories
+CURRENT_STEP="[6/7] restoring CachyOS pacman repositories"
+log_info "[6/7] Ensuring CachyOS optimized repository mirrors are preserved..."
 if [ -f /etc/pacman.conf.cachy_backup ]; then
     # Merge [omarchy] into the CachyOS backup if it wasn't there
     if ! grep -q '^\[omarchy\]' /etc/pacman.conf.cachy_backup; then
@@ -430,9 +442,9 @@ if [ -f /etc/pacman.conf.cachy_backup ]; then
     log_success "CachyOS pacman repositories restored and verified."
 fi
 
-# 10. User Provisioning and Dotfiles Management (User space)
-CURRENT_STEP="[6/6] provisioning user environment"
-log_info "[6/6] Provisioning user environment for $TARGET_USER..."
+# 11. User Provisioning and Dotfiles Management (User space)
+CURRENT_STEP="[7/7] provisioning user environment"
+log_info "[7/7] Provisioning user environment for $TARGET_USER..."
 
 STEP6_LOG="/tmp/omarchy-step6-$(date +%Y%m%d-%H%M%S).log"
 
