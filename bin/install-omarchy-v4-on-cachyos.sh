@@ -97,13 +97,13 @@ fi
 log_info "Validating Omarchy 4.0 source code..."
 FETCH_SCRIPT="$SCRIPT_DIR/fetch-omarchy.sh"
 
-if [ ! -d "$SRC_DIR/bin" ] && [ ! -f "$SRC_DIR/install.sh" ]; then
+if [ ! -d "$SRC_DIR/bin" ] && [ ! -d "$SRC_DIR/install" ]; then
     if [ -f "$FETCH_SCRIPT" ]; then
         chmod +x "$FETCH_SCRIPT"
         OMARCHY_SOURCE_DIR="$SRC_DIR" "$FETCH_SCRIPT"
     else
         log_info "Cloning Omarchy 4.0 into ${SRC_DIR}..."
-        git clone --depth 1 https://github.com/basecamp/omarchy.git "$SRC_DIR"
+        git clone --depth 1 --branch quattro https://github.com/basecamp/omarchy.git "$SRC_DIR"
     fi
 fi
 
@@ -137,6 +137,7 @@ fi
 
 # Ensure executable permissions on all binaries
 sudo chmod -R 755 "$SYSTEM_OMARCHY_DIR/bin" 2>/dev/null || true
+sudo find "$SYSTEM_OMARCHY_DIR/install" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 log_success "Synchronized files to ${SYSTEM_OMARCHY_DIR}."
 
 # 6. Protect CachyOS Ecosystem & Bootloader
@@ -173,7 +174,7 @@ sudo pacman -Sy --noconfirm
 if [ -f /etc/sddm.conf ]; then
     log_info "Backing up /etc/sddm.conf..."
     sudo cp /etc/sddm.conf /etc/sddm.conf.cachyos.bak 2>/dev/null || true
-    sudo rm -f /etc/sddm.conf
+    # NOTE: Do NOT delete sddm.conf — CachyOS needs it for its display manager
 fi
 
 # 7. Hardware & GPU Acceleration (NVIDIA / AMD / Intel)
@@ -186,13 +187,23 @@ fi
 log_info "[4/6] Executing Omarchy 4.0 system apply..."
 
 if [ -x "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" ]; then
-    sudo "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" --install-user "$TARGET_USER" --first-install
-elif [ -f "$SYSTEM_OMARCHY_DIR/install.sh" ]; then
-    log_warn "omarchy-apply-system binary not found. Running install.sh with CachyOS wrapper context..."
-    chmod +x "$SYSTEM_OMARCHY_DIR/install.sh"
-    sudo "$SYSTEM_OMARCHY_DIR/install.sh"
+    sudo -E env \
+        "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
+        "OMARCHY_PATH=$SYSTEM_OMARCHY_DIR" \
+        "OMARCHY_INSTALL=$SYSTEM_OMARCHY_DIR/install" \
+        "OMARCHY_INSTALL_USER=$TARGET_USER" \
+        "OMARCHY_SETUP_CONTEXT=fresh-install" \
+        "$SYSTEM_OMARCHY_DIR/bin/omarchy-apply-system" --install-user "$TARGET_USER" --first-install
 else
-    log_warn "No standard system installer found in $SYSTEM_OMARCHY_DIR."
+    log_warn "omarchy-apply-system not found. Running post-install scripts manually..."
+    # Run hardware detection scripts
+    for script in "$SYSTEM_OMARCHY_DIR"/install/hardware/*.sh; do
+        [ -f "$script" ] && sudo bash "$script" || true
+    done
+    # Run post-install scripts
+    for script in "$SYSTEM_OMARCHY_DIR"/install/post-install/*.sh; do
+        [ -f "$script" ] && sudo bash "$script" || true
+    done
 fi
 log_success "System-level application completed."
 
@@ -212,12 +223,17 @@ fi
 
 # 10. User Provisioning and Dotfiles Management (User space)
 log_info "[6/6] Provisioning user environment for $TARGET_USER..."
-export OMARCHY_SETUP_CONTEXT="fresh-install"
 
 if [ -x "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" ]; then
-    "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" --force --first-install || true
-elif [ -x "$SRC_DIR/bin/omarchy-provision-user" ]; then
-    "$SRC_DIR/bin/omarchy-provision-user" --force --first-install || true
+    sudo -u "$TARGET_USER" env \
+        "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
+        "OMARCHY_PATH=$SYSTEM_OMARCHY_DIR" \
+        "OMARCHY_INSTALL=$SYSTEM_OMARCHY_DIR/install" \
+        "OMARCHY_SETUP_CONTEXT=fresh-install" \
+        "HOME=$USER_HOME" \
+        "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" --force --first-install || true
+else
+    log_warn "omarchy-provision-user not found, skipping user provisioning."
 fi
 
 # Fish Shell & Mise Environment Integration
