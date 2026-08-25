@@ -199,6 +199,9 @@ fi
 CURRENT_STEP="[3/7] installing Omarchy base packages"
 log_info "[3/7] Installing Omarchy base packages..."
 if [ -f "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" ]; then
+    # Prevent conflict with CachyOS's tealdeer
+    sudo sed -i '/^tldr$/d' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages"
+    
     # Filter comments and empty lines to build the package list
     OMARCHY_PKGS=$(awk '!/^#/ && NF {print $1}' "$SYSTEM_OMARCHY_DIR/install/omarchy-base.packages" | tr '\n' ' ')
     log_info "Installing Omarchy base packages via yay..."
@@ -217,6 +220,35 @@ fi
 # 9. Omarchy System Orchestration (Root)
 CURRENT_STEP="[5/7] executing Omarchy system apply"
 log_info "[5/7] Executing Omarchy 4.0 system apply..."
+
+# Apply CachyOS compatibility patches
+log_info "Applying CachyOS compatibility patches..."
+if [ -f "$SYSTEM_OMARCHY_DIR/install/config/increase-lockout-limit.sh" ]; then
+    # Prevent failure on systems without sddm-autologin configured
+    sudo sed -i 's@/etc/pam.d/sddm-autologin@/etc/pam.d/sddm-autologin 2>/dev/null || true@g' "$SYSTEM_OMARCHY_DIR/install/config/increase-lockout-limit.sh"
+fi
+
+if [ -f "$SYSTEM_OMARCHY_DIR/install/config/enable-services.sh" ]; then
+    # Prevent failure if some services are missing
+    sudo sed -i 's@systemctl enable@systemctl enable 2>/dev/null || true #@g' "$SYSTEM_OMARCHY_DIR/install/config/enable-services.sh"
+fi
+
+if [ -f "$SYSTEM_OMARCHY_DIR/install/config/firewall.sh" ]; then
+    # Prevent failure if ufw-docker failed to install due to CachyOS conflicts
+    sudo sed -i 's/ufw_docker_bin=$(command -v ufw-docker)/ufw_docker_bin=$(command -v ufw-docker || true)/g' "$SYSTEM_OMARCHY_DIR/install/config/firewall.sh"
+    sudo sed -i '/if \[ -z "$ufw_docker_bin" \]; then return 0; fi/d' "$SYSTEM_OMARCHY_DIR/install/config/firewall.sh"
+    sudo sed -i '/ufw_docker_bin=$(command -v ufw-docker || true)/a\  if [ -z "$ufw_docker_bin" ]; then return 0; fi' "$SYSTEM_OMARCHY_DIR/install/config/firewall.sh"
+fi
+
+if [ -f "$SYSTEM_OMARCHY_DIR/install/hardware/nvidia.sh" ]; then
+    # Prevent Omarchy from installing nvidia-open-dkms which conflicts with CachyOS
+    sudo sed -i '1s/^/exit 0\n/' "$SYSTEM_OMARCHY_DIR/install/hardware/nvidia.sh"
+fi
+
+# Ensure docker group exists before Omarchy tries to add the user to it
+if ! getent group docker >/dev/null; then
+    sudo groupadd -f docker 2>/dev/null || true
+fi
 
 STEP4_LOG="/tmp/omarchy-step4-$(date +%Y%m%d-%H%M%S).log"
 STEP4_STDERR="/tmp/omarchy-step4-stderr-$(date +%Y%m%d-%H%M%S).log"
