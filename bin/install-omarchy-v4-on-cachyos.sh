@@ -25,8 +25,15 @@ log_error()   { echo -e "${RED}[ERROR]${RESET} $*"; }
 INSTALL_LOG="/tmp/omarchy-install-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$INSTALL_LOG") 2>&1
 
+# Track which step is currently executing so traps can report context
+CURRENT_STEP="initialization"
+
 # Global error trap — reports failing line number and exit code on unexpected abort
-trap 'EXIT_CODE=$?; log_error "Script aborted at line $LINENO (exit code: $EXIT_CODE)"; log_error "Full installation log saved at: $INSTALL_LOG"; exit $EXIT_CODE' ERR
+trap 'EXIT_CODE=$?; log_error "Script aborted at line $LINENO (exit code: $EXIT_CODE)"; log_error "During step: $CURRENT_STEP"; log_error "Full installation log saved at: $INSTALL_LOG"; exit $EXIT_CODE' ERR
+
+# Signal traps — capture Ctrl+C and termination so we show what was interrupted
+trap 'echo ""; log_error "Installation INTERRUPTED by user (Ctrl+C) during step: $CURRENT_STEP"; log_error "Full installation log saved at: $INSTALL_LOG"; exit 130' INT
+trap 'log_error "Installation TERMINATED by signal during step: $CURRENT_STEP"; log_error "Full installation log saved at: $INSTALL_LOG"; exit 143' TERM
 
 log_info "Installation log: ${CYAN}${INSTALL_LOG}${RESET}"
 
@@ -135,6 +142,7 @@ if [ -z "$OMARCHY_USER_EMAIL" ]; then
 fi
 
 # 5. Prepare System Root for Quattro Architecture (/usr/share/omarchy)
+CURRENT_STEP="[1/6] synchronizing Omarchy to system directory"
 log_info "[1/6] Synchronizing Omarchy 4.0 to system directory (${SYSTEM_OMARCHY_DIR})..."
 sudo mkdir -p "$SYSTEM_OMARCHY_DIR"
 
@@ -150,6 +158,7 @@ sudo find "$SYSTEM_OMARCHY_DIR/install" -name '*.sh' -exec chmod +x {} + 2>/dev/
 log_success "Synchronized files to ${SYSTEM_OMARCHY_DIR}."
 
 # 6. Protect CachyOS Ecosystem & Bootloader
+CURRENT_STEP="[2/6] protecting CachyOS packages and bootloader"
 log_info "[2/6] Protecting CachyOS package configurations and bootloader..."
 
 # (a) Backup pacman.conf
@@ -187,12 +196,14 @@ if [ -f /etc/sddm.conf ]; then
 fi
 
 # 7. Hardware & GPU Acceleration (NVIDIA / AMD / Intel)
+CURRENT_STEP="[3/6] configuring hardware video acceleration"
 log_info "[3/6] Configuring hardware video acceleration..."
 if [ -f "$SCRIPT_DIR/nvidia.sh" ]; then
     bash "$SCRIPT_DIR/nvidia.sh"
 fi
 
 # 8. Omarchy System Orchestration (Root)
+CURRENT_STEP="[4/6] executing Omarchy system apply"
 log_info "[4/6] Executing Omarchy 4.0 system apply..."
 
 STEP4_LOG="/tmp/omarchy-step4-$(date +%Y%m%d-%H%M%S).log"
@@ -314,6 +325,7 @@ _diagnose_failure() {
 if [ -n "$APPLY_SYSTEM_SCRIPT" ]; then
     log_info "Found system apply script: ${CYAN}$(basename "$APPLY_SYSTEM_SCRIPT")${RESET}"
     log_info "Running $(basename "$APPLY_SYSTEM_SCRIPT") (detailed log: $STEP4_LOG)..."
+    CURRENT_STEP="running $(basename "$APPLY_SYSTEM_SCRIPT")"
     set +e
     sudo -E env \
         "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
@@ -323,7 +335,9 @@ if [ -n "$APPLY_SYSTEM_SCRIPT" ]; then
         "OMARCHY_SETUP_CONTEXT=fresh-install" \
         "$APPLY_SYSTEM_SCRIPT" --install-user "$TARGET_USER" --first-install \
         > >(tee "$STEP4_LOG") 2> >(tee "$STEP4_STDERR" >&2)
-    STEP4_EXIT=${PIPESTATUS[0]}
+    STEP4_EXIT=$?
+    # Allow tee subprocesses to flush before reading logs
+    sleep 0.5
     set -e
 
     if [ "$STEP4_EXIT" -ne 0 ]; then
@@ -342,10 +356,12 @@ else
         if [ -f "$script" ]; then
             SCRIPTS_FOUND=$((SCRIPTS_FOUND + 1))
             SCRIPT_NAME="$(basename "$script")"
+            CURRENT_STEP="running hardware/$SCRIPT_NAME"
             log_info "  Running hardware/$SCRIPT_NAME..."
             set +e
             sudo bash "$script" > >(tee -a "$STEP4_LOG") 2> >(tee -a "$STEP4_STDERR" >&2)
-            SCRIPT_EXIT=${PIPESTATUS[0]}
+            SCRIPT_EXIT=$?
+            sleep 0.3
             set -e
             if [ "$SCRIPT_EXIT" -ne 0 ]; then
                 log_error "  FAILED: hardware/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
@@ -362,10 +378,12 @@ else
         if [ -f "$script" ]; then
             SCRIPTS_FOUND=$((SCRIPTS_FOUND + 1))
             SCRIPT_NAME="$(basename "$script")"
+            CURRENT_STEP="running post-install/$SCRIPT_NAME"
             log_info "  Running post-install/$SCRIPT_NAME..."
             set +e
             sudo bash "$script" > >(tee -a "$STEP4_LOG") 2> >(tee -a "$STEP4_STDERR" >&2)
-            SCRIPT_EXIT=${PIPESTATUS[0]}
+            SCRIPT_EXIT=$?
+            sleep 0.3
             set -e
             if [ "$SCRIPT_EXIT" -ne 0 ]; then
                 log_error "  FAILED: post-install/$SCRIPT_NAME (exit code: $SCRIPT_EXIT)"
@@ -398,6 +416,7 @@ fi
 log_success "System-level application completed (log: $STEP4_LOG)."
 
 # 9. Restore and Merge CachyOS Pacman Repositories
+CURRENT_STEP="[5/6] restoring CachyOS pacman repositories"
 log_info "[5/6] Ensuring CachyOS optimized repository mirrors are preserved..."
 if [ -f /etc/pacman.conf.cachy_backup ]; then
     # Merge [omarchy] into the CachyOS backup if it wasn't there
@@ -412,12 +431,14 @@ if [ -f /etc/pacman.conf.cachy_backup ]; then
 fi
 
 # 10. User Provisioning and Dotfiles Management (User space)
+CURRENT_STEP="[6/6] provisioning user environment"
 log_info "[6/6] Provisioning user environment for $TARGET_USER..."
 
 STEP6_LOG="/tmp/omarchy-step6-$(date +%Y%m%d-%H%M%S).log"
 
 if [ -x "$SYSTEM_OMARCHY_DIR/bin/omarchy-provision-user" ]; then
     log_info "Running omarchy-provision-user (detailed log: $STEP6_LOG)..."
+    CURRENT_STEP="running omarchy-provision-user"
     set +e
     sudo -u "$TARGET_USER" env \
         "PATH=$SYSTEM_OMARCHY_DIR/bin:$PATH" \
