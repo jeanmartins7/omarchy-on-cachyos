@@ -6,21 +6,28 @@
 
 ## 1. Introduction
 
-This project provides an automated, non-destructive installer for running Basecamp/DHH's **Omarchy** (including **Omarchy 4.0 Quattro**) on top of **CachyOS**. Omarchy provides an opinionated, productive desktop setup based on Hyprland and Quickshell, while CachyOS delivers a performance-optimized Arch Linux distribution with custom x86-64-v3/v4 packages and tuned kernels.
+This project provides an automated, non-destructive wrapper installer for running Basecamp/DHH's **Omarchy** (including **Omarchy 4.0 Quattro**) on top of **CachyOS**. 
+
+In **Omarchy 4.0 (Quattro)**, the installation model transitioned from loose shell scripts to natively packaged system binaries located in `/usr/share/omarchy/`. This installer operates as a safe, non-destructive **wrapper**: it prepares `/usr/share/omarchy`, protects critical CachyOS configurations (such as Limine/systemd-boot and CPU-optimized repository mirrors), runs the native system orchestrator (`omarchy-apply-system`), provisions the user environment (`omarchy-provision-user`), and structures user dotfiles with GNU Stow.
 
 ## 2. What This Project Does and Does Not Do
 
 ### Features:
-1. **Interactive Version Selection**: Choose between the latest **Omarchy 4.x (Quattro)** releases, legacy **Omarchy 3.x**, or bleeding-edge `main` branch.
-2. **CachyOS Preservation**:
+1. **Omarchy 4.0 Quattro Wrapper Architecture**:
+   - Deploys source cleanly to `/usr/share/omarchy/` with verified permissions.
+   - Executes native system orchestrator `omarchy-apply-system` and user provisioner `omarchy-provision-user`.
+   - Eliminates fragile text replacements (`sed`) and missing script errors (`logging.sh`, `all.sh`).
+2. **CachyOS Ecosystem & Bootloader Protection**:
    - Preserves CachyOS CPU microarchitecture optimizations (`[cachyos-v3]`, `[cachyos-v4]`) and package mirrors.
+   - Prevents bootloader clobbering: protects Limine, systemd-boot, and Snapper hooks (`omarchy-boot.hook` locks).
    - Preserves `tealdeer` (Rust-based `tldr` implementation) without package conflicts.
-   - Preserves the Fish shell as the default interactive shell while providing proper environment hooks for `mise` and Omarchy.
-   - Protects existing bootloader and Snapper snapshot configs from being overwritten.
+   - Preserves Fish shell as default with automatic Mise activation and Omarchy path resolution.
 3. **Hardware Acceleration & NVIDIA Support**:
    - Automatically detects NVIDIA GPU architecture (Turing+ with open modules & GSP vs Maxwell/Pascal with proprietary drivers).
    - Preserves native CachyOS `chwd` driver packages without destructive removals or fragile profile hacks.
    - Installs `nvidia-vaapi-driver` and `libva-utils` and injects optimal Wayland/Hyprland environment variables for hardware decoding.
+4. **Dotfiles & GNU Stow Integration**:
+   - Automatically structures generated desktop configurations in `~/.dotfiles/omarchy/.config` and creates clean symlinks via GNU Stow.
 
 ### What This Script Does NOT Do:
 1. Install CachyOS itself (CachyOS must already be installed).
@@ -34,7 +41,7 @@ This project provides an automated, non-destructive installer for running Baseca
 ```
 bin/
 ├── fetch-omarchy.sh               # Interactive version selector and repository cloner
-├── install-omarchy-v4-on-cachyos.sh # Dedicated installer for Omarchy 4.0 (Quattro)
+├── install-omarchy-v4-on-cachyos.sh # Dedicated wrapper installer for Omarchy 4.0 (Quattro)
 ├── install-omarchy-on-cachyos.sh    # Unified launcher (auto-dispatches to v4 or v3)
 └── nvidia.sh                      # Safe NVIDIA & Wayland hardware acceleration setup
 ```

@@ -30,7 +30,7 @@ echo -e "${RESET}"
 # 1. Directory and Path Resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-OMARCHY_SOURCE_DIR="${OMARCHY_SOURCE_DIR:-$(dirname "$PROJECT_ROOT")/omarchy}"
+OMARCHY_SOURCE_DIR="${OMARCHY_SOURCE_DIR:-$HOME/omarchy}"
 
 # 2. Check Git and core tools
 if ! command -v git &> /dev/null; then

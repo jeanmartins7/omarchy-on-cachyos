@@ -22,7 +22,7 @@ log_error()   { echo -e "${RED}[ERROR]${RESET} $*"; }
 # 1. Resolve canonical directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-TARGET_DIR="${OMARCHY_SOURCE_DIR:-$(dirname "$PROJECT_ROOT")/omarchy}"
+TARGET_DIR="${OMARCHY_SOURCE_DIR:-$HOME/omarchy}"
 REPO_URL="https://github.com/basecamp/omarchy.git"
 
 log_info "Omarchy target directory: ${CYAN}${TARGET_DIR}${RESET}"
